@@ -1,46 +1,41 @@
 #!/usr/bin/env bash
 
-# purge-my-mac — recupera espacio ocupado por herramientas de desarrollo en macOS.
+# purge-my-mac — reclaim space used by development tools on macOS.
 
 set -u
 set -o pipefail
 
-VERSION="1.0.0"
-DEEP=false
+VERSION="1.1.0"
 DRY_RUN=false
-ASSUME_YES=false
 COLOR=true
 DATA_VOLUME="/System/Volumes/Data"
 
+# macOS keeps writable user data on its Data volume.
 [[ -d "$DATA_VOLUME" ]] || DATA_VOLUME="/"
 [[ -n "${NO_COLOR:-}" || ! -t 1 ]] && COLOR=false
 
 usage() {
   cat <<EOF
-purge-my-mac ${VERSION} — limpia cachés de desarrollo en macOS
+purge-my-mac ${VERSION} — clean development caches on macOS
 
-Uso:
-  purge-my-mac [opciones]
+Usage:
+  purge-my-mac [options]
 
-Opciones:
-  -d, --deep       Incluye Xcode, VS Code y cachés de aplicaciones
-  -n, --dry-run    Muestra la limpieza sin borrar nada
-  -y, --yes        Omite la confirmación de --deep
-      --no-color   Desactiva colores y animaciones
-  -h, --help       Muestra esta ayuda
-  -v, --version    Muestra la versión
+Options:
+  -n, --dry-run    Preview the cleanup without deleting anything
+      --no-color   Disable colors and animations
+  -h, --help       Show this help
+  -v, --version    Show the version
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -d|--deep) DEEP=true ;;
     -n|--dry-run) DRY_RUN=true ;;
-    -y|--yes) ASSUME_YES=true ;;
     --no-color) COLOR=false ;;
     -h|--help) usage; exit 0 ;;
     -v|--version) printf '%s\n' "$VERSION"; exit 0 ;;
-    *) printf 'Error: opción desconocida: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) printf 'Error: unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
@@ -60,6 +55,7 @@ fi
 TMP_LOG=""
 CURSOR_HIDDEN=false
 
+# Always leave the terminal usable after an interruption.
 finish() {
   if $CURSOR_HIDDEN; then printf '\033[?25h'; fi
   [[ -z "$TMP_LOG" ]] || rm -f "$TMP_LOG"
@@ -69,7 +65,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  printf '%spurge-my-mac está diseñado para macOS.%s\n' "$RED" "$RESET" >&2
+  printf '%spurge-my-mac is built for macOS.%s\n' "$RED" "$RESET" >&2
   exit 1
 fi
 
@@ -86,7 +82,7 @@ section() {
 }
 
 skip_step() {
-  printf '  %s○%s %s %s(no instalado)%s\n' "$DIM" "$RESET" "$1" "$DIM" "$RESET"
+  printf '  %s○%s %s %s(not installed)%s\n' "$DIM" "$RESET" "$1" "$DIM" "$RESET"
 }
 
 show_log_tail() {
@@ -101,12 +97,14 @@ run_step() {
   shift
 
   if $DRY_RUN; then
-    printf '  %s◇%s %s %s(simulación)%s\n' "$CYAN" "$RESET" "$label" "$DIM" "$RESET"
+    printf '  %s◇%s %s %s(preview)%s\n' "$CYAN" "$RESET" "$label" "$DIM" "$RESET"
     return 0
   fi
 
+  # Keep noisy tool output hidden unless a step fails.
   TMP_LOG=$(mktemp "${TMPDIR:-/tmp}/purge-my-mac.XXXXXX") || return 1
 
+  # Animate only when the output is an interactive terminal.
   if [[ -t 1 ]] && $COLOR; then
     "$@" >"$TMP_LOG" 2>&1 &
     pid=$!
@@ -133,7 +131,7 @@ run_step() {
   if [[ $status -eq 0 ]]; then
     printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$label"
   else
-    printf '  %s!%s %s %s(no se pudo completar)%s\n' "$YELLOW" "$RESET" "$label" "$DIM" "$RESET"
+    printf '  %s!%s %s %s(could not complete)%s\n' "$YELLOW" "$RESET" "$label" "$DIM" "$RESET"
     show_log_tail
   fi
 
@@ -148,51 +146,33 @@ remove_paths() {
   shift
   local existing=()
 
+  # Skip missing paths instead of reporting empty cleanup work.
   for path in "$@"; do
     if [[ -e "$path" ]]; then existing+=("$path"); fi
   done
 
   if [[ ${#existing[@]} -eq 0 ]]; then
-    printf '  %s○%s %s %s(ya está limpio)%s\n' "$DIM" "$RESET" "$label" "$DIM" "$RESET"
+    printf '  %s○%s %s %s(already clean)%s\n' "$DIM" "$RESET" "$label" "$DIM" "$RESET"
     return 0
   fi
 
   run_step "$label" rm -rf -- "${existing[@]}"
 }
 
-confirm_deep() {
-  $DEEP || return 0
-  $DRY_RUN && return 0
-  $ASSUME_YES && return 0
-
-  if [[ ! -t 0 ]]; then
-    printf '%sEl modo deep requiere confirmación. Usa --deep --yes.%s\n' "$YELLOW" "$RESET" >&2
-    exit 1
-  fi
-
-  printf '%sEl modo deep eliminará cachés regenerables de Xcode, VS Code y otras herramientas.%s\n' "$YELLOW" "$RESET"
-  printf '¿Continuar? [y/N] '
-  read -r answer
-  case "$answer" in y|Y|yes|YES|sí|SI|Sí) ;; *) printf 'Cancelado.\n'; exit 0 ;; esac
-}
-
-confirm_deep
-
 BEFORE=$(free_gib)
 
-printf '\n%s%s purge-my-mac%s  %slimpieza de desarrollo para macOS%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf '\n%s%s purge-my-mac%s  %smacOS development cleanup%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
 line
-printf '  Espacio libre  %s%s GiB%s\n' "$BOLD" "$BEFORE" "$RESET"
-$DEEP && printf '  Modo           %sDEEP%s\n' "$RED" "$RESET"
-$DRY_RUN && printf '  Ejecución      %ssimulación%s\n' "$CYAN" "$RESET"
+printf '  Free space  %s%s GiB%s\n' "$BOLD" "$BEFORE" "$RESET"
+$DRY_RUN && printf '  Run         %spreview%s\n' "$CYAN" "$RESET"
 
 section '🐳' 'Docker'
 if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then
     run_step 'Build cache' docker builder prune -a -f
-    run_step 'Imágenes sin usar' docker image prune -a -f
+    run_step 'Unused images' docker image prune -a -f
   else
-    printf '  %s○%s Docker no está ejecutándose\n' "$DIM" "$RESET"
+    printf '  %s○%s Docker is not running\n' "$DIM" "$RESET"
   fi
 else
   skip_step 'Docker'
@@ -200,77 +180,76 @@ fi
 
 section '📦' 'JavaScript'
 if command -v pnpm >/dev/null 2>&1; then
-  run_step 'Store de pnpm' pnpm store prune
+  run_step 'pnpm store' pnpm store prune
 else
   skip_step 'pnpm'
 fi
 
 if command -v npm >/dev/null 2>&1; then
-  run_step 'Caché de npm' npm cache clean --force
-  remove_paths 'Temporales y logs de npx' "$HOME/.npm/_npx" "$HOME/.npm/_logs"
+  run_step 'npm cache' npm cache clean --force
+  remove_paths 'npx temporary files and logs' "$HOME/.npm/_npx" "$HOME/.npm/_logs"
 else
   skip_step 'npm'
 fi
 
 if command -v yarn >/dev/null 2>&1; then
-  run_step 'Caché de Yarn' yarn cache clean
+  run_step 'Yarn cache' yarn cache clean
 else
   skip_step 'Yarn'
 fi
 
 section '🍺' 'Homebrew'
 if command -v brew >/dev/null 2>&1; then
-  run_step 'Versiones y descargas antiguas' brew cleanup -s
+  run_step 'Old versions and downloads' brew cleanup -s
 else
   skip_step 'Homebrew'
 fi
 
 section '🐍' 'Python'
 if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
-  run_step 'Caché de pip' python3 -m pip cache purge
+  run_step 'pip cache' python3 -m pip cache purge
 elif command -v pip >/dev/null 2>&1; then
-  run_step 'Caché de pip' pip cache purge
+  run_step 'pip cache' pip cache purge
 else
   skip_step 'pip'
 fi
 
-if $DEEP; then
-  section '🔥' 'Limpieza deep'
-  remove_paths 'Stores y cachés de herramientas' \
-    "$HOME/Library/pnpm/store" \
-    "$HOME/Library/Caches/pnpm" \
-    "$HOME/Library/Caches/Yarn" \
-    "$HOME/Library/Caches/typescript" \
-    "$HOME/Library/Caches/Cypress" \
-    "$HOME/Library/Caches/ms-playwright" \
-    "$HOME/Library/Caches/ms-playwright-go" \
-    "$HOME/Library/Caches/electron" \
-    "$HOME/Library/Caches/CocoaPods" \
-    "$HOME/Library/Caches/pip" \
-    "$HOME/Library/Caches/Homebrew"
+section '🔥' 'Tools and applications'
+remove_paths 'Tool stores and caches' \
+  "$HOME/Library/pnpm/store" \
+  "$HOME/Library/Caches/pnpm" \
+  "$HOME/Library/Caches/Yarn" \
+  "$HOME/Library/Caches/typescript" \
+  "$HOME/Library/Caches/Cypress" \
+  "$HOME/Library/Caches/ms-playwright" \
+  "$HOME/Library/Caches/ms-playwright-go" \
+  "$HOME/Library/Caches/electron" \
+  "$HOME/Library/Caches/CocoaPods" \
+  "$HOME/Library/Caches/pip" \
+  "$HOME/Library/Caches/Homebrew"
 
-  remove_paths 'DerivedData de Xcode' "$HOME/Library/Developer/Xcode/DerivedData"
+remove_paths 'Xcode DerivedData' "$HOME/Library/Developer/Xcode/DerivedData"
 
-  CODE_DIR="$HOME/Library/Application Support/Code"
-  if [[ -d "$CODE_DIR" ]]; then
-    remove_paths 'Cachés y estado de workspaces de VS Code' \
-      "$CODE_DIR/Cache" \
-      "$CODE_DIR/CachedData" \
-      "$CODE_DIR/Code Cache" \
-      "$CODE_DIR/GPUCache" \
-      "$CODE_DIR/DawnGraphiteCache" \
-      "$CODE_DIR/DawnWebGPUCache" \
-      "$CODE_DIR/Crashpad" \
-      "$CODE_DIR/logs" \
-      "$CODE_DIR/Service Worker/CacheStorage" \
-      "$CODE_DIR/User/workspaceStorage"
-    printf '  %sTus ajustes, atajos y extensiones se conservan.%s\n' "$DIM" "$RESET"
-  else
-    skip_step 'VS Code'
-  fi
+CODE_DIR="$HOME/Library/Application Support/Code"
+if [[ -d "$CODE_DIR" ]]; then
+  remove_paths 'VS Code caches and workspace state' \
+    "$CODE_DIR/Cache" \
+    "$CODE_DIR/CachedData" \
+    "$CODE_DIR/Code Cache" \
+    "$CODE_DIR/GPUCache" \
+    "$CODE_DIR/DawnGraphiteCache" \
+    "$CODE_DIR/DawnWebGPUCache" \
+    "$CODE_DIR/Crashpad" \
+    "$CODE_DIR/logs" \
+    "$CODE_DIR/Service Worker/CacheStorage" \
+    "$CODE_DIR/User/workspaceStorage"
+  printf '  %sYour settings, keybindings, and extensions are preserved.%s\n' "$DIM" "$RESET"
+else
+  skip_step 'VS Code'
 fi
 
 AFTER=$(free_gib)
+# Free space can fluctuate while the script runs; never report a negative result.
 RECOVERED=$(awk -v after="$AFTER" -v before="$BEFORE" 'BEGIN {
   difference=after-before
   if (difference < 0) difference=0
@@ -280,10 +259,10 @@ RECOVERED=$(awk -v after="$AFTER" -v before="$BEFORE" 'BEGIN {
 printf '\n'
 line
 if $DRY_RUN; then
-  printf '%s◇ Simulación terminada%s — no se eliminó ningún archivo.\n\n' "$CYAN" "$RESET"
+  printf '%s◇ Preview complete%s — no files were removed.\n\n' "$CYAN" "$RESET"
 else
-  printf '%s✓ Limpieza terminada%s\n\n' "$GREEN" "$RESET"
-  printf '  Antes       %s GiB libres\n' "$BEFORE"
-  printf '  Después     %s GiB libres\n' "$AFTER"
-  printf '  Recuperado  %s%s GiB%s\n\n' "$BOLD" "$RECOVERED" "$RESET"
+  printf '%s✓ Cleanup complete%s\n\n' "$GREEN" "$RESET"
+  printf '  Before     %s GiB free\n' "$BEFORE"
+  printf '  After      %s GiB free\n' "$AFTER"
+  printf '  Reclaimed  %s%s GiB%s\n\n' "$BOLD" "$RECOVERED" "$RESET"
 fi

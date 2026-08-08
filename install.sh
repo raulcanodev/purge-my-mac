@@ -17,28 +17,30 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  printf 'purge-my-mac está diseñado para macOS.\n' >&2
+  printf 'purge-my-mac is built for macOS.\n' >&2
   exit 1
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
-  printf 'Se necesita curl para instalar purge-my-mac.\n' >&2
+  printf 'curl is required to install purge-my-mac.\n' >&2
   exit 1
 fi
 
-printf '\n  Instalando purge-my-mac…\n'
+# Download first so a failed request never replaces a working install.
+printf '\n  Installing purge-my-mac…\n'
 curl -fsSL "$SOURCE_URL" -o "$TEMP_FILE"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$TEMP_FILE" "$TARGET"
 
-printf '  ✓ Instalado en %s\n' "$TARGET"
+printf '  ✓ Installed at %s\n' "$TARGET"
 
+# Tell the user when their shell cannot find the new command yet.
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
-    printf '\n  Añade esta línea a tu ~/.zshrc y abre una terminal nueva:\n\n'
+    printf '\n  Add this line to ~/.zshrc, then open a new terminal:\n\n'
     printf '    export PATH="%s:$PATH"\n' "$INSTALL_DIR"
     ;;
 esac
 
-printf '\n  Ejecuta: purge-my-mac --dry-run\n\n'
+printf '\n  Run: purge-my-mac --dry-run\n\n'

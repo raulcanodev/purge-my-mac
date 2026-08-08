@@ -2,61 +2,52 @@
 
 # purge-my-mac
 
-Una pequeña limpieza de primavera para tu entorno de desarrollo en macOS. Recupera espacio de Docker, npm, pnpm, Yarn, Homebrew y pip con una salida clara, animada y sin dependencias.
+A little spring cleaning for your macOS development environment. Reclaim space from Docker, package managers, Xcode, VS Code, and more—with clear, animated output and zero dependencies.
 
-## Instalar
+## Install
 
-Copia y pega esto en Terminal:
+Copy and paste this into Terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/raulcanodev/purge-my-mac/main/install.sh | bash
 ```
 
-Después ejecuta:
+Then run:
 
 ```bash
 purge-my-mac
 ```
 
-> ¿Prefieres mirar antes de tocar nada? Usa `purge-my-mac --dry-run`.
+> Want to look before touching anything? Run `purge-my-mac --dry-run`.
 
-## Modos
-
-```bash
-purge-my-mac             # limpieza habitual
-purge-my-mac --dry-run   # muestra qué limpiaría, sin borrar
-purge-my-mac --deep      # añade cachés grandes de apps y herramientas
-purge-my-mac --help      # todas las opciones
-```
-
-El modo normal limpia recursos no utilizados de Docker y las cachés de pnpm, npm/npx, Yarn, Homebrew y pip cuando esas herramientas están instaladas.
-
-`--deep` también elimina stores y cachés regenerables de Playwright, Cypress, Electron, CocoaPods, TypeScript, Xcode y VS Code. En VS Code conserva ajustes, atajos y extensiones, pero elimina cachés y `workspaceStorage`; por eso pide confirmación.
-
-Para automatizar la limpieza deep sin pregunta interactiva:
+## Usage
 
 ```bash
-purge-my-mac --deep --yes
+purge-my-mac             # run the full cleanup
+purge-my-mac --dry-run   # preview without deleting anything
+purge-my-mac --help      # show all options
 ```
 
-## Actualizar o desinstalar
+The cleanup removes unused Docker resources and regenerable caches from pnpm, npm/npx, Yarn, Homebrew, pip, Playwright, Cypress, Electron, CocoaPods, TypeScript, Xcode, and VS Code. It preserves your VS Code settings, keybindings, and extensions, but removes caches and `workspaceStorage`.
 
-Para actualizar, vuelve a ejecutar el comando de instalación. Para desinstalar:
+## Update or uninstall
+
+Run the installation command again to update. To uninstall:
 
 ```bash
 rm ~/.local/bin/purge-my-mac
 ```
 
-## Compatibilidad y seguridad
+## Compatibility and safety
 
-- Diseñado para macOS y compatible con el Bash incluido en el sistema.
-- Solo actúa sobre cachés regenerables y recursos de Docker sin usar.
-- Continúa si una herramienta falla y muestra el error sin ocultarlo.
-- Respeta [`NO_COLOR`](https://no-color.org/) y desactiva animaciones al redirigir la salida.
+- Built for macOS and compatible with the system Bash.
+- Only removes regenerable caches and unused Docker resources.
+- Keeps going when a tool fails and displays the error instead of hiding it.
+- Respects [`NO_COLOR`](https://no-color.org/) and disables animations when output is redirected.
 
-El ahorro mostrado compara el espacio libre del disco antes y después de la ejecución; otros procesos pueden afectar ligeramente al resultado.
+The reported savings compare free disk space before and after the run. Other processes may slightly affect the result.
 
-## Desarrollo
+## Development
 
 ```bash
 bash -n purge-my-mac install.sh
