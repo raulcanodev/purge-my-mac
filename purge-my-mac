@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# dev-clean — recupera espacio ocupado por herramientas de desarrollo en macOS.
+# purge-my-mac — recupera espacio ocupado por herramientas de desarrollo en macOS.
 
 set -u
 set -o pipefail
@@ -17,10 +17,10 @@ DATA_VOLUME="/System/Volumes/Data"
 
 usage() {
   cat <<EOF
-dev-clean ${VERSION} — limpia cachés de desarrollo en macOS
+purge-my-mac ${VERSION} — limpia cachés de desarrollo en macOS
 
 Uso:
-  dev-clean [opciones]
+  purge-my-mac [opciones]
 
 Opciones:
   -d, --deep       Incluye Xcode, VS Code y cachés de aplicaciones
@@ -69,7 +69,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  printf '%sdev-clean está diseñado para macOS.%s\n' "$RED" "$RESET" >&2
+  printf '%spurge-my-mac está diseñado para macOS.%s\n' "$RED" "$RESET" >&2
   exit 1
 fi
 
@@ -105,7 +105,7 @@ run_step() {
     return 0
   fi
 
-  TMP_LOG=$(mktemp "${TMPDIR:-/tmp}/dev-clean.XXXXXX") || return 1
+  TMP_LOG=$(mktemp "${TMPDIR:-/tmp}/purge-my-mac.XXXXXX") || return 1
 
   if [[ -t 1 ]] && $COLOR; then
     "$@" >"$TMP_LOG" 2>&1 &
@@ -180,7 +180,7 @@ confirm_deep
 
 BEFORE=$(free_gib)
 
-printf '\n%s%s dev-clean%s  %slimpieza de desarrollo para macOS%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf '\n%s%s purge-my-mac%s  %slimpieza de desarrollo para macOS%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
 line
 printf '  Espacio libre  %s%s GiB%s\n' "$BOLD" "$BEFORE" "$RESET"
 $DEEP && printf '  Modo           %sDEEP%s\n' "$RED" "$RESET"

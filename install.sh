@@ -2,12 +2,12 @@
 
 set -eu
 
-REPOSITORY="${DEV_CLEAN_REPOSITORY:-raulcanodev/purge-my-mac}"
-BRANCH="${DEV_CLEAN_BRANCH:-main}"
-INSTALL_DIR="${DEV_CLEAN_INSTALL_DIR:-$HOME/.local/bin}"
-SOURCE_URL="https://raw.githubusercontent.com/${REPOSITORY}/${BRANCH}/dev-clean"
-TARGET="$INSTALL_DIR/dev-clean"
-TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/dev-clean-install.XXXXXX")
+REPOSITORY="${PURGE_MY_MAC_REPOSITORY:-raulcanodev/purge-my-mac}"
+BRANCH="${PURGE_MY_MAC_BRANCH:-main}"
+INSTALL_DIR="${PURGE_MY_MAC_INSTALL_DIR:-$HOME/.local/bin}"
+SOURCE_URL="https://raw.githubusercontent.com/${REPOSITORY}/${BRANCH}/purge-my-mac"
+TARGET="$INSTALL_DIR/purge-my-mac"
+TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/purge-my-mac-install.XXXXXX")
 
 cleanup() {
   rm -f "$TEMP_FILE"
@@ -17,16 +17,16 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  printf 'dev-clean está diseñado para macOS.\n' >&2
+  printf 'purge-my-mac está diseñado para macOS.\n' >&2
   exit 1
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
-  printf 'Se necesita curl para instalar dev-clean.\n' >&2
+  printf 'Se necesita curl para instalar purge-my-mac.\n' >&2
   exit 1
 fi
 
-printf '\n  Instalando dev-clean…\n'
+printf '\n  Instalando purge-my-mac…\n'
 curl -fsSL "$SOURCE_URL" -o "$TEMP_FILE"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$TEMP_FILE" "$TARGET"
@@ -41,4 +41,4 @@ case ":$PATH:" in
     ;;
 esac
 
-printf '\n  Ejecuta: dev-clean --dry-run\n\n'
+printf '\n  Ejecuta: purge-my-mac --dry-run\n\n'
