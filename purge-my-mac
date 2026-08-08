@@ -5,7 +5,7 @@
 set -u
 set -o pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 DRY_RUN=false
 COLOR=true
 DATA_VOLUME="/System/Volumes/Data"
@@ -159,6 +159,72 @@ remove_paths() {
   run_step "$label" rm -rf -- "${existing[@]}"
 }
 
+ask_yes_no() {
+  local prompt="$1"
+  local answer
+
+  # Prompt through the terminal even when stdin is redirected.
+  if ! { : </dev/tty; } 2>/dev/null; then
+    printf '  %s○%s Interactive cleanup skipped %s(no terminal available)%s\n' \
+      "$DIM" "$RESET" "$DIM" "$RESET"
+    return 1
+  fi
+
+  while true; do
+    printf '  %s%s%s [y/N] ' "$BOLD" "$prompt" "$RESET" >/dev/tty
+    if ! IFS= read -r answer </dev/tty; then return 1; fi
+
+    case "$answer" in
+      y|Y|yes|Yes|YES) return 0 ;;
+      ""|n|N|no|No|NO) return 1 ;;
+      *) printf '  Please answer yes or no.\n' >/dev/tty ;;
+    esac
+  done
+}
+
+quit_macos_app() {
+  local app_name="$1"
+  local process_name="$2"
+  local i=0
+
+  if ! pgrep -x "$process_name" >/dev/null 2>&1; then return 0; fi
+
+  printf '  %s◇%s Closing %s...\n' "$CYAN" "$RESET" "$app_name"
+  if ! osascript -e "tell application \"$app_name\" to quit" >/dev/null 2>&1; then
+    printf '  %s!%s Could not ask %s to quit. Cleanup skipped.\n' \
+      "$YELLOW" "$RESET" "$app_name"
+    return 1
+  fi
+
+  # Give the app five seconds to exit cleanly.
+  while pgrep -x "$process_name" >/dev/null 2>&1; do
+    if [[ $i -ge 20 ]]; then
+      printf '  %s!%s %s is still running. Cleanup skipped to protect its data.\n' \
+        "$YELLOW" "$RESET" "$app_name"
+      return 1
+    fi
+    sleep 0.25
+    i=$((i + 1))
+  done
+
+  printf '  %s✓%s %s closed\n' "$GREEN" "$RESET" "$app_name"
+}
+
+has_cursor_transcripts() {
+  local root="$HOME/.cursor/projects"
+
+  [[ -d "$root" ]] || return 1
+  find "$root" -type d -name 'agent-transcripts' -print -quit 2>/dev/null | grep -q .
+}
+
+clean_cursor_transcripts() {
+  local root="$HOME/.cursor/projects"
+
+  [[ -d "$root" ]] || return 0
+  # Remove transcript folders without touching project files.
+  find "$root" -type d -name 'agent-transcripts' -prune -exec rm -rf -- {} \;
+}
+
 BEFORE=$(free_gib)
 
 printf '\n%s%s purge-my-mac%s  %smacOS development cleanup%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
@@ -232,7 +298,7 @@ remove_paths 'Xcode DerivedData' "$HOME/Library/Developer/Xcode/DerivedData"
 
 CODE_DIR="$HOME/Library/Application Support/Code"
 if [[ -d "$CODE_DIR" ]]; then
-  remove_paths 'VS Code caches and workspace state' \
+  remove_paths 'VS Code caches' \
     "$CODE_DIR/Cache" \
     "$CODE_DIR/CachedData" \
     "$CODE_DIR/Code Cache" \
@@ -241,11 +307,93 @@ if [[ -d "$CODE_DIR" ]]; then
     "$CODE_DIR/DawnWebGPUCache" \
     "$CODE_DIR/Crashpad" \
     "$CODE_DIR/logs" \
-    "$CODE_DIR/Service Worker/CacheStorage" \
-    "$CODE_DIR/User/workspaceStorage"
-  printf '  %sYour settings, keybindings, and extensions are preserved.%s\n' "$DIM" "$RESET"
+    "$CODE_DIR/Service Worker/CacheStorage"
+  printf '  %sSettings, keybindings, extensions, and chats are preserved.%s\n' "$DIM" "$RESET"
 else
   skip_step 'VS Code'
+fi
+
+CURSOR_DIR="$HOME/Library/Application Support/Cursor"
+if [[ -d "$CURSOR_DIR" ]]; then
+  remove_paths 'Cursor caches' \
+    "$CURSOR_DIR/Cache" \
+    "$CURSOR_DIR/CachedData" \
+    "$CURSOR_DIR/Code Cache" \
+    "$CURSOR_DIR/GPUCache" \
+    "$CURSOR_DIR/DawnGraphiteCache" \
+    "$CURSOR_DIR/DawnWebGPUCache" \
+    "$CURSOR_DIR/Crashpad" \
+    "$CURSOR_DIR/logs" \
+    "$CURSOR_DIR/Service Worker/CacheStorage"
+  printf '  %sSettings, keybindings, extensions, and chats are preserved.%s\n' "$DIM" "$RESET"
+else
+  skip_step 'Cursor'
+fi
+
+section '💬' 'Optional chat cleanup'
+
+CURSOR_STATE_DIR="$CURSOR_DIR/User/globalStorage"
+CURSOR_CHAT_PATHS=(
+  "$CURSOR_STATE_DIR/state.vscdb"
+  "$CURSOR_STATE_DIR/state.vscdb-wal"
+  "$CURSOR_STATE_DIR/state.vscdb-shm"
+  "$CURSOR_STATE_DIR/state.vscdb.backup"
+  "$CURSOR_STATE_DIR/conversation-search.db"
+  "$CURSOR_STATE_DIR/conversation-search.db-wal"
+  "$CURSOR_STATE_DIR/conversation-search.db-shm"
+  "$CURSOR_DIR/User/workspaceStorage"
+)
+
+CURSOR_HAS_CHAT_DATA=false
+for path in "${CURSOR_CHAT_PATHS[@]}"; do
+  if [[ -e "$path" ]]; then
+    CURSOR_HAS_CHAT_DATA=true
+    break
+  fi
+done
+if has_cursor_transcripts; then CURSOR_HAS_CHAT_DATA=true; fi
+
+if $CURSOR_HAS_CHAT_DATA; then
+  printf '\n  %sCursor chat cleanup%s\n' "$BOLD" "$RESET"
+  printf '  %sThis permanently removes local Cursor chat/agent history and workspace state.%s\n' \
+    "$YELLOW" "$RESET"
+  printf '  %sSettings, keybindings, and extensions are preserved.%s\n' "$DIM" "$RESET"
+
+  if $DRY_RUN; then
+    printf '  %s◇%s Would ask whether to remove Cursor chat history\n' "$CYAN" "$RESET"
+  elif ask_yes_no 'Delete all local Cursor chats and agent history?'; then
+    if quit_macos_app 'Cursor' 'Cursor'; then
+      remove_paths 'Cursor chat and workspace databases' "${CURSOR_CHAT_PATHS[@]}"
+      if has_cursor_transcripts; then
+        run_step 'Cursor agent transcripts' clean_cursor_transcripts
+      fi
+    fi
+  else
+    printf '  %s○%s Cursor chats preserved\n' "$DIM" "$RESET"
+  fi
+else
+  printf '  %s○%s Cursor chats %s(already clean)%s\n' "$DIM" "$RESET" "$DIM" "$RESET"
+fi
+
+VSCODE_WORKSPACE_STORAGE="$CODE_DIR/User/workspaceStorage"
+if [[ -e "$VSCODE_WORKSPACE_STORAGE" ]]; then
+  printf '\n  %sVS Code chat cleanup%s\n' "$BOLD" "$RESET"
+  printf '  %sThis removes local chat history and workspace state stored by VS Code.%s\n' \
+    "$YELLOW" "$RESET"
+  printf '  %sSettings, keybindings, and extensions are preserved.%s\n' "$DIM" "$RESET"
+
+  if $DRY_RUN; then
+    printf '  %s◇%s Would ask whether to remove VS Code chat/workspace history\n' \
+      "$CYAN" "$RESET"
+  elif ask_yes_no 'Delete local VS Code chat and workspace history?'; then
+    if quit_macos_app 'Visual Studio Code' 'Code'; then
+      remove_paths 'VS Code chat and workspace state' "$VSCODE_WORKSPACE_STORAGE"
+    fi
+  else
+    printf '  %s○%s VS Code chats preserved\n' "$DIM" "$RESET"
+  fi
+else
+  printf '  %s○%s VS Code chats %s(already clean)%s\n' "$DIM" "$RESET" "$DIM" "$RESET"
 fi
 
 AFTER=$(free_gib)

@@ -30,7 +30,11 @@ purge-my-mac --dry-run   # preview without deleting anything
 purge-my-mac --help      # show all options
 ```
 
-The cleanup removes unused Docker resources and regenerable caches from pnpm, npm/npx, Yarn, Homebrew, pip, Playwright, Cypress, Electron, CocoaPods, TypeScript, Xcode, and VS Code. It preserves your VS Code settings, keybindings, and extensions, but removes caches and `workspaceStorage`.
+The cleanup removes unused Docker resources and regenerable caches from pnpm, npm/npx, Yarn, Homebrew, pip, Playwright, Cypress, Electron, CocoaPods, TypeScript, Xcode, VS Code, and Cursor.
+
+Chat history and workspace state are treated differently: they are never removed automatically. When local Cursor or VS Code chat data is found, `purge-my-mac` explains what will be deleted and asks for confirmation. The app is closed cleanly before its data is touched; if it cannot close, that cleanup is skipped.
+
+Settings, keybindings, and extensions are always preserved. `--dry-run` never prompts or closes applications.
 
 ## Update or uninstall
 
@@ -43,7 +47,8 @@ rm ~/.local/bin/purge-my-mac
 ## Compatibility and safety
 
 - Built for macOS and compatible with the system Bash.
-- Only removes regenerable caches and unused Docker resources.
+- Automatically removes only regenerable caches and unused Docker resources.
+- Requires explicit confirmation before removing chat history or workspace state.
 - Keeps going when a tool fails and displays the error instead of hiding it.
 - Respects [`NO_COLOR`](https://no-color.org/) and disables animations when output is redirected.
 
