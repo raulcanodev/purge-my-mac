@@ -18,6 +18,8 @@ Then run:
 purge-my-mac
 ```
 
+![purge-my-mac in action](./purgue-my-mac.gif)
+
 > Want to look before touching anything? Run `purge-my-mac --dry-run`.
 
 ## Usage
