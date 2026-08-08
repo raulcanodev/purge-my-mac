@@ -5,7 +5,7 @@
 set -u
 set -o pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 DRY_RUN=false
 COLOR=true
 DATA_VOLUME="/System/Volumes/Data"
@@ -159,6 +159,24 @@ remove_paths() {
   run_step "$label" rm -rf -- "${existing[@]}"
 }
 
+any_path_exists() {
+  local path
+  for path in "$@"; do
+    if [[ -e "$path" ]]; then return 0; fi
+  done
+  return 1
+}
+
+directory_has_entries() {
+  local directory="$1"
+  [[ -d "$directory" ]] || return 1
+  find "$directory" -mindepth 1 -print -quit 2>/dev/null | grep -q .
+}
+
+path_size() {
+  du -sh "$1" 2>/dev/null | awk 'NR==1 { print $1 }'
+}
+
 ask_yes_no() {
   local prompt="$1"
   local answer
@@ -208,6 +226,22 @@ quit_macos_app() {
   done
 
   printf '  %s✓%s %s closed\n' "$GREEN" "$RESET" "$app_name"
+}
+
+codex_is_running() {
+  pgrep -x 'Codex' >/dev/null 2>&1 || pgrep -x 'codex' >/dev/null 2>&1
+}
+
+prepare_codex_cleanup() {
+  if pgrep -x 'Codex' >/dev/null 2>&1; then
+    quit_macos_app 'Codex' 'Codex' || return 1
+  fi
+
+  if pgrep -x 'codex' >/dev/null 2>&1; then
+    printf '  %s!%s Codex CLI is still running. Cleanup skipped to protect its data.\n' \
+      "$YELLOW" "$RESET"
+    return 1
+  fi
 }
 
 has_cursor_transcripts() {
@@ -330,7 +364,60 @@ else
   skip_step 'Cursor'
 fi
 
-section '💬' 'Optional chat cleanup'
+CODEX_DATA_DIR="${CODEX_HOME:-$HOME/.codex}"
+CODEX_TEMP_DIR="$CODEX_DATA_DIR/.tmp"
+CODEX_CACHE_DIR="$CODEX_DATA_DIR/cache"
+CODEX_CACHE_PATHS=(
+  "$CODEX_TEMP_DIR"
+  "$CODEX_CACHE_DIR"
+)
+
+if any_path_exists "${CODEX_CACHE_PATHS[@]}"; then
+  if codex_is_running; then
+    printf '  %s○%s Codex temporary files and cache %s(Codex is running)%s\n' \
+      "$DIM" "$RESET" "$DIM" "$RESET"
+  else
+    if [[ -e "$CODEX_TEMP_DIR" ]]; then
+      CODEX_TEMP_SIZE=$(path_size "$CODEX_TEMP_DIR")
+      remove_paths "Codex temporary files · ${CODEX_TEMP_SIZE:-unknown size}" "$CODEX_TEMP_DIR"
+    fi
+    if [[ -e "$CODEX_CACHE_DIR" ]]; then
+      CODEX_CACHE_SIZE=$(path_size "$CODEX_CACHE_DIR")
+      remove_paths "Codex cache · ${CODEX_CACHE_SIZE:-unknown size}" "$CODEX_CACHE_DIR"
+    fi
+  fi
+else
+  printf '  %s○%s Codex temporary files and cache %s(already clean)%s\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET"
+fi
+printf '  %sActive sessions, plugins, logs, settings, and authentication are preserved.%s\n' \
+  "$DIM" "$RESET"
+
+section '💬' 'Optional history cleanup'
+
+CODEX_ARCHIVED_SESSIONS="$CODEX_DATA_DIR/archived_sessions"
+if directory_has_entries "$CODEX_ARCHIVED_SESSIONS"; then
+  CODEX_ARCHIVE_SIZE=$(path_size "$CODEX_ARCHIVED_SESSIONS")
+  printf '\n  %sCodex archived sessions%s  %s%s%s\n' \
+    "$BOLD" "$RESET" "$CYAN" "${CODEX_ARCHIVE_SIZE:-unknown size}" "$RESET"
+  printf '  %sThis permanently removes locally archived Codex sessions.%s\n' \
+    "$YELLOW" "$RESET"
+  printf '  %sActive sessions, configuration, plugins, logs, and authentication are preserved.%s\n' \
+    "$DIM" "$RESET"
+
+  if $DRY_RUN; then
+    printf '  %s◇%s Would ask whether to remove archived Codex sessions\n' "$CYAN" "$RESET"
+  elif ask_yes_no 'Delete all locally archived Codex sessions?'; then
+    if prepare_codex_cleanup; then
+      remove_paths 'Codex archived sessions' "$CODEX_ARCHIVED_SESSIONS"
+    fi
+  else
+    printf '  %s○%s Codex archived sessions preserved\n' "$DIM" "$RESET"
+  fi
+else
+  printf '  %s○%s Codex archived sessions %s(already clean)%s\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET"
+fi
 
 CURSOR_STATE_DIR="$CURSOR_DIR/User/globalStorage"
 CURSOR_CHAT_PATHS=(
@@ -376,6 +463,7 @@ else
 fi
 
 VSCODE_WORKSPACE_STORAGE="$CODE_DIR/User/workspaceStorage"
+VSCODE_GLOBAL_STATE="$CODE_DIR/User/globalStorage/state.vscdb"
 if [[ -e "$VSCODE_WORKSPACE_STORAGE" ]]; then
   printf '\n  %sVS Code chat cleanup%s\n' "$BOLD" "$RESET"
   printf '  %sThis removes local chat history and workspace state stored by VS Code.%s\n' \
@@ -392,6 +480,11 @@ if [[ -e "$VSCODE_WORKSPACE_STORAGE" ]]; then
   else
     printf '  %s○%s VS Code chats preserved\n' "$DIM" "$RESET"
   fi
+elif [[ -e "$VSCODE_GLOBAL_STATE" ]]; then
+  printf '  %s○%s VS Code workspace chats %s(not found)%s\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET"
+  printf '  %sGlobal VS Code state is preserved because it may contain unrelated data.%s\n' \
+    "$DIM" "$RESET"
 else
   printf '  %s○%s VS Code chats %s(already clean)%s\n' "$DIM" "$RESET" "$DIM" "$RESET"
 fi
