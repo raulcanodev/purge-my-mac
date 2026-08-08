@@ -30,30 +30,31 @@ purge-my-mac --dry-run   # preview without deleting anything
 purge-my-mac --help      # show all options
 ```
 
-The cleanup removes unused Docker resources and regenerable caches from pnpm, npm/npx, Yarn, Homebrew, pip, Playwright, Cypress, Electron, CocoaPods, TypeScript, Xcode, VS Code, and Cursor.
+## What it cleans
 
-Chat history, archived sessions, and workspace state are treated differently: they are never removed automatically. When local Codex, Cursor, or VS Code workspace history is found, `purge-my-mac` explains what will be deleted and asks for confirmation. The app is closed cleanly before its data is touched; if it cannot close, that cleanup is skipped.
+Regenerable caches and unused resources are removed automatically. History and workspace state always require explicit confirmation.
 
-VS Code's global state database is always preserved because it can contain unrelated extension and interface data alongside chat metadata.
+| Tool | Cleaned automatically | With confirmation | Preserved |
+| --- | --- | --- | --- |
+| Docker | Build cache and unused images | — | Containers, volumes, and images attached to containers |
+| pnpm | Store and Library caches | — | Configuration and project files |
+| npm / npx | npm cache, npx temporary files, and logs | — | Global packages, configuration, and project files |
+| Yarn | Yarn and Library caches | — | Global installs, configuration, and project files |
+| Homebrew | Old versions and cached downloads | — | Current formulae and casks |
+| pip | Download and wheel caches | — | Environments and installed packages |
+| TypeScript | Library cache | — | Projects and configuration |
+| Cypress | Downloaded binary cache | — | Projects and configuration |
+| Playwright | Downloaded browser caches | — | Projects and configuration |
+| Electron | Download cache | — | Installed applications and projects |
+| CocoaPods | Library cache | — | Pods installed inside projects |
+| Xcode | `DerivedData` | — | Projects, archives, simulators, and settings |
+| VS Code | Cache, GPU cache, logs, crash data, and Service Worker cache | Chat and workspace state in `workspaceStorage` | Settings, keybindings, extensions, and the shared global state database |
+| Cursor | Cache, GPU cache, logs, crash data, and Service Worker cache | Chat databases, workspace state, and agent transcripts | Settings, keybindings, and extensions |
+| Codex | `~/.codex/.tmp` and `~/.codex/cache` when Codex is closed | `~/.codex/archived_sessions` | Active sessions, plugins, logs, configuration, authentication, attachments, generated images, skills, and Application Support |
 
-Settings, keybindings, and extensions are always preserved. `--dry-run` never prompts or closes applications.
+Apps are closed cleanly before confirmed history removal. If an app cannot close, its cleanup is skipped. `--dry-run` never prompts, closes applications, or removes files.
 
-## Codex data
-
-`purge-my-mac` treats Codex data conservatively:
-
-| Data | Treatment |
-| --- | --- |
-| `~/.codex/.tmp` and `~/.codex/cache` | Removed automatically when Codex is not running |
-| `~/.codex/archived_sessions` | Removed only after explicit confirmation |
-| `~/.codex/sessions` | Always preserved |
-| `~/.codex/plugins` | Always preserved; it contains installed components and binaries |
-| `~/.codex/logs_*.sqlite` | Preserved because these databases may contain more than disposable logs |
-| `~/Library/Application Support/Codex` | Preserved |
-
-Configuration, authentication, active sessions, attachments, generated images, skills, and other Codex data are not touched. If `CODEX_HOME` is set, its value is used instead of `~/.codex`.
-
-ChatGPT Atlas data is not managed. In particular, `browser-data` is a browser profile that may contain history, cookies, settings, and site storage—not just cache.
+If `CODEX_HOME` is set, it is used instead of `~/.codex`. ChatGPT Atlas browser data is not managed because it may contain history, cookies, settings, and site storage—not just cache.
 
 ## Update or uninstall
 
