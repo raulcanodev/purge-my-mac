@@ -5,7 +5,7 @@
 set -u
 set -o pipefail
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 DRY_RUN=false
 COLOR=true
 DATA_VOLUME="/System/Volumes/Data"
@@ -54,6 +54,8 @@ fi
 
 TMP_LOG=""
 CURSOR_HIDDEN=false
+FAILED_COUNT=0
+FAILED_STEPS=()
 
 # Always leave the terminal usable after an interruption.
 finish() {
@@ -73,6 +75,16 @@ free_gib() {
   df -Pk "$DATA_VOLUME" 2>/dev/null | awk 'NR==2 { printf "%.1f", $4/1024/1024 }'
 }
 
+reclaimed_gib() {
+  local current
+  current="${1:-$(free_gib)}"
+  awk -v current="$current" -v before="$BEFORE" 'BEGIN {
+    difference=current-before
+    if (difference < 0) difference=0
+    printf "%.1f", difference
+  }'
+}
+
 line() {
   printf '%s\n' "${DIM}────────────────────────────────────────${RESET}"
 }
@@ -90,6 +102,15 @@ show_log_tail() {
   tail -n 4 "$TMP_LOG" | sed 's/^/      /'
 }
 
+record_failure() {
+  FAILED_COUNT=$((FAILED_COUNT + 1))
+  FAILED_STEPS+=("$1")
+}
+
+show_reclaimed_so_far() {
+  printf '      %sReclaimed so far: %s GiB%s\n' "$DIM" "$(reclaimed_gib)" "$RESET"
+}
+
 run_step() {
   local label="$1"
   local status=0
@@ -102,7 +123,14 @@ run_step() {
   fi
 
   # Keep noisy tool output hidden unless a step fails.
-  TMP_LOG=$(mktemp "${TMPDIR:-/tmp}/purge-my-mac.XXXXXX") || return 1
+  if ! TMP_LOG=$(mktemp "${TMPDIR:-/tmp}/purge-my-mac.XXXXXX"); then
+    printf '  %s!%s %s %s(could not create a temporary log)%s\n' \
+      "$YELLOW" "$RESET" "$label" "$DIM" "$RESET"
+    record_failure "$label"
+    show_reclaimed_so_far
+    TMP_LOG=""
+    return 0
+  fi
 
   # Animate only when the output is an interactive terminal.
   if [[ -t 1 ]] && $COLOR; then
@@ -133,6 +161,8 @@ run_step() {
   else
     printf '  %s!%s %s %s(could not complete)%s\n' "$YELLOW" "$RESET" "$label" "$DIM" "$RESET"
     show_log_tail
+    record_failure "$label"
+    show_reclaimed_so_far
   fi
 
   rm -f "$TMP_LOG"
@@ -200,48 +230,55 @@ ask_yes_no() {
   done
 }
 
-quit_macos_app() {
-  local app_name="$1"
-  local process_name="$2"
+processes_running() {
+  local process_name
+  for process_name in "$@"; do
+    if pgrep -x "$process_name" >/dev/null 2>&1; then return 0; fi
+  done
+  return 1
+}
+
+stop_processes() {
+  local label="$1"
+  local process_name
   local i=0
+  shift
 
-  if ! pgrep -x "$process_name" >/dev/null 2>&1; then return 0; fi
+  $DRY_RUN && return 0
+  processes_running "$@" || return 0
+  printf '  %s◇%s Stopping %s...\n' "$CYAN" "$RESET" "$label"
 
-  printf '  %s◇%s Closing %s...\n' "$CYAN" "$RESET" "$app_name"
-  if ! osascript -e "tell application \"$app_name\" to quit" >/dev/null 2>&1; then
-    printf '  %s!%s Could not ask %s to quit. Cleanup skipped.\n' \
-      "$YELLOW" "$RESET" "$app_name"
-    return 1
-  fi
+  # Ask every matching process to terminate before forcing it.
+  for process_name in "$@"; do
+    pkill -TERM -x "$process_name" >/dev/null 2>&1 || true
+  done
 
-  # Give the app five seconds to exit cleanly.
-  while pgrep -x "$process_name" >/dev/null 2>&1; do
-    if [[ $i -ge 20 ]]; then
-      printf '  %s!%s %s is still running. Cleanup skipped to protect its data.\n' \
-        "$YELLOW" "$RESET" "$app_name"
-      return 1
-    fi
+  while processes_running "$@" && [[ $i -lt 20 ]]; do
     sleep 0.25
     i=$((i + 1))
   done
 
-  printf '  %s✓%s %s closed\n' "$GREEN" "$RESET" "$app_name"
-}
-
-codex_is_running() {
-  pgrep -x 'Codex' >/dev/null 2>&1 || pgrep -x 'codex' >/dev/null 2>&1
-}
-
-prepare_codex_cleanup() {
-  if pgrep -x 'Codex' >/dev/null 2>&1; then
-    quit_macos_app 'Codex' 'Codex' || return 1
+  if processes_running "$@"; then
+    printf '  %s◇%s Force stopping %s...\n' "$YELLOW" "$RESET" "$label"
+    for process_name in "$@"; do
+      pkill -KILL -x "$process_name" >/dev/null 2>&1 || true
+    done
+    i=0
+    while processes_running "$@" && [[ $i -lt 8 ]]; do
+      sleep 0.25
+      i=$((i + 1))
+    done
   fi
 
-  if pgrep -x 'codex' >/dev/null 2>&1; then
-    printf '  %s!%s Codex CLI is still running. Cleanup skipped to protect its data.\n' \
-      "$YELLOW" "$RESET"
+  if processes_running "$@"; then
+    printf '  %s!%s %s is still running. Its cleanup was skipped.\n' \
+      "$YELLOW" "$RESET" "$label"
+    record_failure "Stop $label"
+    show_reclaimed_so_far
     return 1
   fi
+
+  printf '  %s✓%s %s stopped\n' "$GREEN" "$RESET" "$label"
 }
 
 has_cursor_transcripts() {
@@ -328,20 +365,39 @@ remove_paths 'Tool stores and caches' \
   "$HOME/Library/Caches/pip" \
   "$HOME/Library/Caches/Homebrew"
 
-remove_paths 'Xcode DerivedData' "$HOME/Library/Developer/Xcode/DerivedData"
+XCODE_DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
+if [[ -e "$XCODE_DERIVED_DATA" ]]; then
+  if stop_processes 'Xcode' 'Xcode' 'xcodebuild' 'XCBBuildService'; then
+    remove_paths 'Xcode DerivedData' "$XCODE_DERIVED_DATA"
+  fi
+else
+  printf '  %s○%s Xcode DerivedData %s(already clean)%s\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET"
+fi
 
 CODE_DIR="$HOME/Library/Application Support/Code"
 if [[ -d "$CODE_DIR" ]]; then
-  remove_paths 'VS Code caches' \
-    "$CODE_DIR/Cache" \
-    "$CODE_DIR/CachedData" \
-    "$CODE_DIR/Code Cache" \
-    "$CODE_DIR/GPUCache" \
-    "$CODE_DIR/DawnGraphiteCache" \
-    "$CODE_DIR/DawnWebGPUCache" \
-    "$CODE_DIR/Crashpad" \
-    "$CODE_DIR/logs" \
+  VSCODE_CACHE_PATHS=(
+    "$CODE_DIR/Cache"
+    "$CODE_DIR/CachedData"
+    "$CODE_DIR/Code Cache"
+    "$CODE_DIR/GPUCache"
+    "$CODE_DIR/DawnGraphiteCache"
+    "$CODE_DIR/DawnWebGPUCache"
+    "$CODE_DIR/Crashpad"
+    "$CODE_DIR/logs"
     "$CODE_DIR/Service Worker/CacheStorage"
+  )
+  if any_path_exists "${VSCODE_CACHE_PATHS[@]}"; then
+    if stop_processes 'VS Code' \
+        'Code' 'Code Helper' 'Code Helper \(GPU\)' \
+        'Code Helper \(Plugin\)' 'Code Helper \(Renderer\)'; then
+      remove_paths 'VS Code caches' "${VSCODE_CACHE_PATHS[@]}"
+    fi
+  else
+    printf '  %s○%s VS Code caches %s(already clean)%s\n' \
+      "$DIM" "$RESET" "$DIM" "$RESET"
+  fi
   printf '  %sSettings, keybindings, extensions, and chats are preserved.%s\n' "$DIM" "$RESET"
 else
   skip_step 'VS Code'
@@ -349,16 +405,27 @@ fi
 
 CURSOR_DIR="$HOME/Library/Application Support/Cursor"
 if [[ -d "$CURSOR_DIR" ]]; then
-  remove_paths 'Cursor caches' \
-    "$CURSOR_DIR/Cache" \
-    "$CURSOR_DIR/CachedData" \
-    "$CURSOR_DIR/Code Cache" \
-    "$CURSOR_DIR/GPUCache" \
-    "$CURSOR_DIR/DawnGraphiteCache" \
-    "$CURSOR_DIR/DawnWebGPUCache" \
-    "$CURSOR_DIR/Crashpad" \
-    "$CURSOR_DIR/logs" \
+  CURSOR_CACHE_PATHS=(
+    "$CURSOR_DIR/Cache"
+    "$CURSOR_DIR/CachedData"
+    "$CURSOR_DIR/Code Cache"
+    "$CURSOR_DIR/GPUCache"
+    "$CURSOR_DIR/DawnGraphiteCache"
+    "$CURSOR_DIR/DawnWebGPUCache"
+    "$CURSOR_DIR/Crashpad"
+    "$CURSOR_DIR/logs"
     "$CURSOR_DIR/Service Worker/CacheStorage"
+  )
+  if any_path_exists "${CURSOR_CACHE_PATHS[@]}"; then
+    if stop_processes 'Cursor' \
+        'Cursor' 'Cursor Helper' 'Cursor Helper \(GPU\)' \
+        'Cursor Helper \(Plugin\)' 'Cursor Helper \(Renderer\)'; then
+      remove_paths 'Cursor caches' "${CURSOR_CACHE_PATHS[@]}"
+    fi
+  else
+    printf '  %s○%s Cursor caches %s(already clean)%s\n' \
+      "$DIM" "$RESET" "$DIM" "$RESET"
+  fi
   printf '  %sSettings, keybindings, extensions, and chats are preserved.%s\n' "$DIM" "$RESET"
 else
   skip_step 'Cursor'
@@ -373,10 +440,9 @@ CODEX_CACHE_PATHS=(
 )
 
 if any_path_exists "${CODEX_CACHE_PATHS[@]}"; then
-  if codex_is_running; then
-    printf '  %s○%s Codex temporary files and cache %s(Codex is running)%s\n' \
-      "$DIM" "$RESET" "$DIM" "$RESET"
-  else
+  if stop_processes 'Codex' \
+      'Codex' 'codex' 'Codex Helper' 'Codex Helper \(GPU\)' \
+      'Codex Helper \(Plugin\)' 'Codex Helper \(Renderer\)'; then
     if [[ -e "$CODEX_TEMP_DIR" ]]; then
       CODEX_TEMP_SIZE=$(path_size "$CODEX_TEMP_DIR")
       remove_paths "Codex temporary files · ${CODEX_TEMP_SIZE:-unknown size}" "$CODEX_TEMP_DIR"
@@ -390,32 +456,43 @@ else
   printf '  %s○%s Codex temporary files and cache %s(already clean)%s\n' \
     "$DIM" "$RESET" "$DIM" "$RESET"
 fi
-printf '  %sActive sessions, plugins, logs, settings, and authentication are preserved.%s\n' \
+printf '  %sSession history is handled separately; plugins, logs, settings, and authentication are preserved.%s\n' \
   "$DIM" "$RESET"
 
 section '💬' 'Optional history cleanup'
 
+CODEX_SESSIONS="$CODEX_DATA_DIR/sessions"
 CODEX_ARCHIVED_SESSIONS="$CODEX_DATA_DIR/archived_sessions"
-if directory_has_entries "$CODEX_ARCHIVED_SESSIONS"; then
-  CODEX_ARCHIVE_SIZE=$(path_size "$CODEX_ARCHIVED_SESSIONS")
-  printf '\n  %sCodex archived sessions%s  %s%s%s\n' \
-    "$BOLD" "$RESET" "$CYAN" "${CODEX_ARCHIVE_SIZE:-unknown size}" "$RESET"
-  printf '  %sThis permanently removes locally archived Codex sessions.%s\n' \
+CODEX_SESSION_PATHS=("$CODEX_SESSIONS" "$CODEX_ARCHIVED_SESSIONS")
+
+if directory_has_entries "$CODEX_SESSIONS" || directory_has_entries "$CODEX_ARCHIVED_SESSIONS"; then
+  printf '\n  %sCodex local session history%s\n' "$BOLD" "$RESET"
+  if directory_has_entries "$CODEX_SESSIONS"; then
+    CODEX_SESSIONS_SIZE=$(path_size "$CODEX_SESSIONS")
+    printf '  Current sessions   %s%s%s\n' "$CYAN" "${CODEX_SESSIONS_SIZE:-unknown size}" "$RESET"
+  fi
+  if directory_has_entries "$CODEX_ARCHIVED_SESSIONS"; then
+    CODEX_ARCHIVE_SIZE=$(path_size "$CODEX_ARCHIVED_SESSIONS")
+    printf '  Archived sessions  %s%s%s\n' "$CYAN" "${CODEX_ARCHIVE_SIZE:-unknown size}" "$RESET"
+  fi
+  printf '  %sThis permanently removes all local Codex chats and session history.%s\n' \
     "$YELLOW" "$RESET"
-  printf '  %sActive sessions, configuration, plugins, logs, and authentication are preserved.%s\n' \
+  printf '  %sConfiguration, plugins, logs, and authentication are preserved.%s\n' \
     "$DIM" "$RESET"
 
   if $DRY_RUN; then
-    printf '  %s◇%s Would ask whether to remove archived Codex sessions\n' "$CYAN" "$RESET"
-  elif ask_yes_no 'Delete all locally archived Codex sessions?'; then
-    if prepare_codex_cleanup; then
-      remove_paths 'Codex archived sessions' "$CODEX_ARCHIVED_SESSIONS"
+    printf '  %s◇%s Would ask whether to remove all local Codex sessions\n' "$CYAN" "$RESET"
+  elif ask_yes_no 'Delete all local Codex chats and session history?'; then
+    if stop_processes 'Codex' \
+        'Codex' 'codex' 'Codex Helper' 'Codex Helper \(GPU\)' \
+        'Codex Helper \(Plugin\)' 'Codex Helper \(Renderer\)'; then
+      remove_paths 'Codex local session history' "${CODEX_SESSION_PATHS[@]}"
     fi
   else
-    printf '  %s○%s Codex archived sessions preserved\n' "$DIM" "$RESET"
+    printf '  %s○%s Codex local session history preserved\n' "$DIM" "$RESET"
   fi
 else
-  printf '  %s○%s Codex archived sessions %s(already clean)%s\n' \
+  printf '  %s○%s Codex local session history %s(already clean)%s\n' \
     "$DIM" "$RESET" "$DIM" "$RESET"
 fi
 
@@ -449,7 +526,9 @@ if $CURSOR_HAS_CHAT_DATA; then
   if $DRY_RUN; then
     printf '  %s◇%s Would ask whether to remove Cursor chat history\n' "$CYAN" "$RESET"
   elif ask_yes_no 'Delete all local Cursor chats and agent history?'; then
-    if quit_macos_app 'Cursor' 'Cursor'; then
+    if stop_processes 'Cursor' \
+        'Cursor' 'Cursor Helper' 'Cursor Helper \(GPU\)' \
+        'Cursor Helper \(Plugin\)' 'Cursor Helper \(Renderer\)'; then
       remove_paths 'Cursor chat and workspace databases' "${CURSOR_CHAT_PATHS[@]}"
       if has_cursor_transcripts; then
         run_step 'Cursor agent transcripts' clean_cursor_transcripts
@@ -474,7 +553,9 @@ if [[ -e "$VSCODE_WORKSPACE_STORAGE" ]]; then
     printf '  %s◇%s Would ask whether to remove VS Code chat/workspace history\n' \
       "$CYAN" "$RESET"
   elif ask_yes_no 'Delete local VS Code chat and workspace history?'; then
-    if quit_macos_app 'Visual Studio Code' 'Code'; then
+    if stop_processes 'VS Code' \
+        'Code' 'Code Helper' 'Code Helper \(GPU\)' \
+        'Code Helper \(Plugin\)' 'Code Helper \(Renderer\)'; then
       remove_paths 'VS Code chat and workspace state' "$VSCODE_WORKSPACE_STORAGE"
     fi
   else
@@ -490,20 +571,29 @@ else
 fi
 
 AFTER=$(free_gib)
-# Free space can fluctuate while the script runs; never report a negative result.
-RECOVERED=$(awk -v after="$AFTER" -v before="$BEFORE" 'BEGIN {
-  difference=after-before
-  if (difference < 0) difference=0
-  printf "%.1f", difference
-}')
+RECOVERED=$(reclaimed_gib "$AFTER")
 
 printf '\n'
 line
 if $DRY_RUN; then
   printf '%s◇ Preview complete%s — no files were removed.\n\n' "$CYAN" "$RESET"
 else
-  printf '%s✓ Cleanup complete%s\n\n' "$GREEN" "$RESET"
+  if [[ $FAILED_COUNT -eq 0 ]]; then
+    printf '%s✓ Cleanup complete%s\n\n' "$GREEN" "$RESET"
+  else
+    printf '%s! Cleanup finished with %s warning(s)%s\n\n' \
+      "$YELLOW" "$FAILED_COUNT" "$RESET"
+  fi
   printf '  Before     %s GiB free\n' "$BEFORE"
   printf '  After      %s GiB free\n' "$AFTER"
   printf '  Reclaimed  %s%s GiB%s\n\n' "$BOLD" "$RECOVERED" "$RESET"
+
+  if [[ $FAILED_COUNT -gt 0 ]]; then
+    printf '  %sFailed steps:%s\n' "$YELLOW" "$RESET"
+    for step in "${FAILED_STEPS[@]}"; do
+      printf '    - %s\n' "$step"
+    done
+    printf '\n'
+    exit 1
+  fi
 fi

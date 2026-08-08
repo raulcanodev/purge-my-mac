@@ -50,9 +50,13 @@ Regenerable caches and unused resources are removed automatically. History and w
 | Xcode | `DerivedData` | — | Projects, archives, simulators, and settings |
 | VS Code | Cache, GPU cache, logs, crash data, and Service Worker cache | Chat and workspace state in `workspaceStorage` | Settings, keybindings, extensions, and the shared global state database |
 | Cursor | Cache, GPU cache, logs, crash data, and Service Worker cache | Chat databases, workspace state, and agent transcripts | Settings, keybindings, and extensions |
-| Codex | `~/.codex/.tmp` and `~/.codex/cache` when Codex is closed | `~/.codex/archived_sessions` | Active sessions, plugins, logs, configuration, authentication, attachments, generated images, skills, and Application Support |
+| Codex | `~/.codex/.tmp` and `~/.codex/cache` | All local chat/session history in `~/.codex/sessions` and `~/.codex/archived_sessions` | Plugins, logs, configuration, authentication, attachments, generated images, skills, and Application Support |
 
-Apps are closed cleanly before confirmed history removal. If an app cannot close, its cleanup is skipped. `--dry-run` never prompts, closes applications, or removes files.
+Xcode, VS Code, Cursor, and Codex are stopped with `pkill` before their files are cleaned. The script sends `TERM` first and falls back to `KILL` only when a process does not stop. If it still cannot stop, that cleanup is skipped.
+
+Run `purge-my-mac` from Terminal, not from inside Codex or another app it may stop.
+
+Failures do not hide successful work: the failing step and its last output are shown immediately, along with the space reclaimed so far. A final warning summary lists every failed step and the total space still recovered. `--dry-run` never prompts, stops applications, or removes files.
 
 If `CODEX_HOME` is set, it is used instead of `~/.codex`. ChatGPT Atlas browser data is not managed because it may contain history, cookies, settings, and site storage—not just cache.
 
@@ -68,7 +72,7 @@ rm ~/.local/bin/purge-my-mac
 
 - Built for macOS and compatible with the system Bash.
 - Automatically removes only regenerable caches and unused Docker resources.
-- Requires explicit confirmation before removing chat history, archived sessions, or workspace state.
+- Requires explicit confirmation before removing chat history, Codex sessions, or workspace state.
 - Keeps going when a tool fails and displays the error instead of hiding it.
 - Respects [`NO_COLOR`](https://no-color.org/) and disables animations when output is redirected.
 
