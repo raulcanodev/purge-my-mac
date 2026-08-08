@@ -2,7 +2,7 @@
 
 # purge-my-mac
 
-A little spring cleaning for your macOS development environment. Reclaim space from Docker, package managers, Xcode, VS Code, and more—with clear, animated output and zero dependencies.
+A little spring cleaning for your macOS development environment. Reclaim space from Docker, package managers, Xcode, VS Code, and more with clear, animated output and zero dependencies.
 
 ## Install
 
